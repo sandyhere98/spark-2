@@ -1,93 +1,129 @@
-# Wine-quality-prediction-aws
-CS-643- Programming Assignment-2
+1. Prepare AWS Environment
+Launch EC2 Instances:
 
-## Parallel Training Implementation: - ##
----------------
+Launch 4 EC2 instances with Ubuntu Linux AMI.
+Ensure the instances are in the same security group with proper networking rules (open required ports such as 22 for SSH, 8080 for Spark, etc.).
+Install Java, Python, and Apache Spark on all instances.
+Set Up a Spark Cluster:
 
-- Cluster Creation: - We will create 1 cluster with 5 nodes where 1 node will act as master node and others will be slave nodes.
+Designate one EC2 instance as the master node and others as worker nodes.
+Configure Spark (conf/spark-env.sh and conf/slaves) to set up a multi-node cluster.
+Upload Data to S3:
 
-- File uploading on S3 bucket: - After cluster creation S3 bucket will be auto generated. Here we will upload Training.py file and the dataset. 
+Upload TrainingDataset.csv and ValidationDataset.csv to an S3 bucket.
+2. Train the ML Model with Spark MLlib
+Write the Training Script: Save the following script as train_model.py.
 
-- Now we will pull the stored files from S3 bucket to the master node by connecting to the master node (Using following commands).
+python
+from pyspark.sql import SparkSession
+from pyspark.ml.feature import VectorAssembler
+from pyspark.ml.classification import LogisticRegression
+from pyspark.ml.evaluation import MulticlassClassificationEvaluator
 
-		aws s3 cp s3://aws-logs-877244108283-us-east-1/elasticmapreduce/j-38II9TYTEUBU5/TrainingDataset.csv ./
-    	aws s3 cp s3://aws-logs-877244108283-us-east-1/elasticmapreduce/j-38II9TYTEUBU5/ValidationDataset.csv ./
-    	aws s3 cp s3://aws-logs-877244108283-us-east-1/elasticmapreduce/j-38II9TYTEUBU5/Training.py ./
-    
-- Now we will make these files available to other slave nodes(Using following commands).
-     hadoop fs -put TrainingDataset.csv
-		 hadoop fs -put ValidationDataset.csv
-     
-- Type “ls” and hit enter you will find all the files stored in it.
+# Initialize Spark Session
+spark = SparkSession.builder.appName("WineQualityPrediction").getOrCreate()
 
-- Install all the required libraries by storing it in “requirements.txt”(We’ve already uploaded it in S3 bucket) and running the following command.
-			pip install -r requirements.txt
-	
-- Scala Installation on master node: -
-			wget https://downloads.lightbend.com/scala/2.12.4/scala-2.12.4.rpm
-			sudo yum install scala-2.12.4.rpm
+# Load Training Data
+training_data = spark.read.csv("s3://your-bucket/TrainingDataset.csv", header=True, inferSchema=True)
 
-- Spark Installation: -
-			wget https://dlcdn.apache.org/spark/spark-3.3.1/spark-3.3.1-bin-hadoop3.tgz
-      sudo tar xvf spark-3.3.1-bin-hadoop3.tgz -C /opt
-      sudo chown -R ec2-user:ec2-user /opt/spark-3.3.1-bin-hadoop3
-      sudo ln -fs spark-3.3.1-bin-hadoop3 /opt/spark
-	 
+# Prepare Features
+feature_columns = training_data.columns[:-1]  # Exclude target column
+assembler = VectorAssembler(inputCols=feature_columns, outputCol="features")
+training_data = assembler.transform(training_data).select("features", "quality")
 
-- Let’s run the Training.py using: - 
-- spark-submit Training.py
+# Train Model
+logistic_regression = LogisticRegression(featuresCol="features", labelCol="quality", maxIter=10)
+model = logistic_regression.fit(training_data)
 
+# Save Model
+model.save("s3://your-bucket/models/wine_quality_model")
 
-## Predicting the wine quality on single machine: - ##
----------------
-
-- Create new ec2 instance and connect to it.
-- Install python, Java, Spark, Scala, and all the required dependencies.
-- The trained model will get store in S3 bucket lets copy it from S3 to ec2 instance: - 
-
-      aws s3 cp s3://aws-logs-766621730595-us-east-1/elasticmapreduce/j-1CPN0XQGUGAEC/trainingmodel.model ./ --recursive
+spark.stop()
+Run Training Script: Submit the job to the Spark cluster using spark-submit:
 
 
-- Now Unzip the model and move the contents to the new folder which we will be creating now: - 	
+spark-submit --master spark://<master-node-ip>:7077 train_model.py
+3. Validate and Optimize the Model
+Write the Validation Script: Save the following script as validate_model.py.
 
-    tar -xzvf model.tar.gz
-    mkdir model
-    mv data<downloaded file> model<model folder>
-    mv metadata<downloaded file> model<model folder>
+python
+Copy code
+from pyspark.sql import SparkSession
+from pyspark.ml.feature import VectorAssembler
+from pyspark.ml.classification import LogisticRegressionModel
+from pyspark.ml.evaluation import MulticlassClassificationEvaluator
 
-- Update the path Environment: -
-	
-      vim ~/.bash_profile
-      copy following lines into file and then save it
-      export SPARK_HOME=/opt/spark
-      PATH=$PATH:$SPARK_HOME/bin
-      export PATH
+# Initialize Spark Session
+spark = SparkSession.builder.appName("WineQualityValidation").getOrCreate()
 
-- Save the file and run the following command: - 
+# Load Validation Data
+validation_data = spark.read.csv("s3://your-bucket/ValidationDataset.csv", header=True, inferSchema=True)
 
-      source  ~/.bash_profile
+# Prepare Features
+feature_columns = validation_data.columns[:-1]
+assembler = VectorAssembler(inputCols=feature_columns, outputCol="features")
+validation_data = assembler.transform(validation_data).select("features", "quality")
 
-- Run the Testing file: - 
-	
-        spark-submit test.py
+# Load Model
+model = LogisticRegressionModel.load("s3://your-bucket/models/wine_quality_model")
 
+# Predict and Evaluate
+predictions = model.transform(validation_data)
+evaluator = MulticlassClassificationEvaluator(labelCol="quality", predictionCol="prediction", metricName="f1")
+f1_score = evaluator.evaluate(predictions)
 
-  
-## Prediction using Docker Container:- ##
----------------
-	
-- The container runs the validationData.csv and prints Test Error Link to docker hub image
+print(f"F1 Score: {f1_score}")
 
-- Launch your ec2-instance and then step-up docker using the above steps.
-- Place all the files from github into your instance.
-- Pull the image from repositroy: 
-	
-		docker pull tejashk/win_quality_prediction
-
-- Run the image using : 
-	
-		docker run tejashk/win_quality_prediction driver test.py ValidationDataset.csv model
+spark.stop()
+Run Validation Script:
 
 
-  
+spark-submit --master spark://<master-node-ip>:7077 validate_model.py
+4. Dockerize the Prediction Application
+Create a Prediction Script: Save the following script as predict_model.py.
 
+
+from pyspark.sql import SparkSession
+from pyspark.ml.feature import VectorAssembler
+from pyspark.ml.classification import LogisticRegressionModel
+
+# Initialize Spark Session
+spark = SparkSession.builder.appName("WineQualityPrediction").getOrCreate()
+
+# Load Test Data
+test_data = spark.read.csv("/app/TestDataset.csv", header=True, inferSchema=True)
+
+# Prepare Features
+feature_columns = test_data.columns[:-1]
+assembler = VectorAssembler(inputCols=feature_columns, outputCol="features")
+test_data = assembler.transform(test_data).select("features")
+
+# Load Model
+model = LogisticRegressionModel.load("/app/models/wine_quality_model")
+
+# Predict
+predictions = model.transform(test_data)
+predictions.select("prediction").show()
+
+spark.stop()
+Create a Dockerfile: Save the following as Dockerfile.
+
+dockerfile
+
+FROM openjdk:11
+COPY . /app
+WORKDIR /app
+CMD ["spark-submit", "predict_model.py"]
+Build and Push Docker Image:
+
+
+docker build -t wine-quality-prediction .
+docker tag wine-quality-prediction:latest <your-dockerhub-username>/wine-quality-prediction:latest
+docker push <your-dockerhub-username>/wine-quality-prediction:latest
+Run Docker Container:
+
+bash
+Copy code
+docker run -v /path/to/models:/app/models -v /path/to/TestDataset.csv:/app/TestDataset.csv wine-quality-prediction
+5. Test on a Single EC2 Instance
+Use the Test Dataset (TestDataset.csv) to ensure the application runs correctly and outputs the F1 score.
