@@ -70,4 +70,4 @@ error = labelsAndPredictions.filter(
     lambda lp: lp[0] != lp[1]).count() / float(test.count())
 print('Error = ' + str(error))
 
-RFmodel.save(sc, 's3://aws-logs-766621730595-us-east-1/elasticmapreduce/j-3NKDKZSBHWW3/trainingmodel.model')
+

@@ -18,7 +18,7 @@ from sklearn.metrics import f1_score
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
 
 configuration = pyspark.SparkConf().setAppName('winequality').setMaster('local')
-spark_context = pyspark.SparkContext(configuration=configuration)
+spark_context = pyspark.SparkContext(conf=configuration)
 spark = SparkSession(spark_context)
 validation = spark.read.format("csv").load("ValidationDataset.csv" , header = True , sep=";")
 validation.printSchema()
@@ -44,7 +44,7 @@ def labeledpoint(spark_context, features, labels, categorical=False):
 
 dataset = labeledpoint(spark_context, features, label)
 
-RFModel = RandomForestModel.load(spark_context, "/home/ec2-user/model/")
+RFModel = RandomForestModel.load(spark_context, "model/")
 
 print("model loaded successfully")
 predictions = RFModel.predict(dataset.map(lambda x: x.features))
